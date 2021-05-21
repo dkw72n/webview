@@ -831,6 +831,8 @@ using browser_engine = cocoa_wkwebview_engine;
 
 // Edge/Chromium headers and libs
 #include "webview2.h"
+#include "WebView2EnvironmentOptions.h"
+#include <wrl.h>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 
@@ -852,10 +854,8 @@ public:
 //
 // EdgeHTML browser engine
 //
-using namespace winrt;
-using namespace Windows::Foundation;
-using namespace Windows::Web::UI;
-using namespace Windows::Web::UI::Interop;
+using namespace winrt::Windows::Web::UI;
+using namespace winrt::Windows::Web::UI::Interop;
 
 class edge_html : public browser {
 public:
@@ -863,9 +863,9 @@ public:
     init_apartment(winrt::apartment_type::single_threaded);
     auto process = WebViewControlProcess();
     auto op = process.CreateWebViewControlAsync(reinterpret_cast<int64_t>(wnd),
-                                                Rect());
-    if (op.Status() != AsyncStatus::Completed) {
-      handle h(CreateEvent(nullptr, false, false, nullptr));
+                                                winrt::Windows::Foundation::Rect());
+    if (op.Status() != winrt::Windows::Foundation::AsyncStatus::Completed) {
+      winrt::handle h(CreateEvent(nullptr, false, false, nullptr));
       op.Completed([h = h.get()](auto, auto) { SetEvent(h); });
       HANDLE hs[] = {h.get()};
       DWORD i;
@@ -893,7 +893,7 @@ public:
     if (html != "") {
       m_webview.NavigateToString(winrt::to_hstring(html));
     } else {
-      Uri uri(winrt::to_hstring(url));
+      winrt::Windows::Foundation::Uri uri(winrt::to_hstring(url));
       m_webview.Navigate(uri);
     }
   }
@@ -904,7 +904,7 @@ public:
 
   void eval(const std::string js) override {
     m_webview.InvokeScriptAsync(
-        L"eval", single_threaded_vector<hstring>({winrt::to_hstring(js)}));
+        L"eval", winrt::single_threaded_vector<winrt::hstring>({winrt::to_hstring(js)}));
   }
 
   void resize(HWND wnd) override {
@@ -913,7 +913,7 @@ public:
     }
     RECT r;
     GetClientRect(wnd, &r);
-    Rect bounds(r.left, r.top, r.right - r.left, r.bottom - r.top);
+    winrt::Windows::Foundation::Rect bounds(r.left, r.top, r.right - r.left, r.bottom - r.top);
     m_webview.Bounds(bounds);
   }
 
@@ -941,13 +941,25 @@ public:
         wideCharConverter.from_bytes(std::getenv("APPDATA"));
     std::wstring currentExeNameW = wideCharConverter.from_bytes(currentExeName);
 
+    auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+    if (debug) {  
+      options->put_AdditionalBrowserArguments(L"--force-devtools-available");
+      options->put_AdditionalBrowserArguments(L"--auto-open-devtools-for-tabs");
+    } 
     HRESULT res = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, (userDataFolder + L"/" + currentExeNameW).c_str(), nullptr,
+        nullptr, (userDataFolder + L"/" + currentExeNameW).c_str(), options.Get(),
         new webview2_com_handler(wnd, cb,
                                  [&](ICoreWebView2Controller *controller) {
                                    m_controller = controller;
                                    m_controller->get_CoreWebView2(&m_webview);
                                    m_webview->AddRef();
+                                   if (!debug){
+                                    ICoreWebView2Settings *settings;
+                                    if (m_webview->get_Settings(&settings) == S_OK) {
+                                      settings->put_AreDevToolsEnabled(FALSE);
+                                      m_webview->get_Settings(&settings);
+                                    }
+                                   }
                                    flag.clear();
                                  }));
     if (res != S_OK) {
